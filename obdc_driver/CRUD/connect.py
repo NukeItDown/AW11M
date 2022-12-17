@@ -14,6 +14,7 @@ SQLEndTran = ODBC_API.SQLEndTran
 SQLRowCount = ODBC_API.SQLRowCount
 
 bytearray_cvt = bytearray
+
 if sys.platform == 'cli':
     bytearray_cvt = lambda x: bytearray(buffer(x))
 
@@ -81,9 +82,6 @@ def get_type(v):
 
     return type(v)
 
-
-py_ver = sys.version[:3]
-py_v3 = py_ver >= '3.0'
 
 def TupleRow(cursor):
     class Row(tuple):
@@ -169,20 +167,11 @@ class OperationalError(DatabaseError):
         self.value = (error_code, error_desc)
         self.args = (error_code, error_desc)
 
-def ctrl_err(ht, h, val_ret, ansi):
-    if ansi:
-        state = create_buffer(22)
-        Message = create_buffer(1024*4)
-        ODBC_func = ODBC_API.SQLGetDiagRec
-        if py_v3:
-            raw_s = lambda s: bytes(s,'ascii')
-        else:
-            raw_s = str_8b
-    else:
-        state = create_buffer_u(24)
-        Message = create_buffer_u(1024*4)
-        ODBC_func = ODBC_API.SQLGetDiagRecW
-        raw_s = unicode
+def ctrl_err(ht, h, val_ret):
+    state = create_buffer_u(24)
+    Message = create_buffer_u(1024*4)
+    ODBC_func = ODBC_API.SQLGetDiagRecW
+    raw_s = unicode
     NativeError = ctypes.c_int()
     Buffer_len = c_short()
     err_list = []
@@ -212,10 +201,7 @@ def ctrl_err(ht, h, val_ret, ansi):
         elif ret == SQL_INVALID_HANDLE:
             raise ProgrammingError('', 'SQL_INVALID_HANDLE')
         elif ret == SQL_SUCCESS:
-            if ansi:
-                err_list.append((state.value, Message.value, NativeError.value))
-            else:
-                err_list.append((from_buffer_u(state), from_buffer_u(Message), NativeError.value))
+            err_list.append((from_buffer_u(state), from_buffer_u(Message), NativeError.value))
             number_errors += 1
         elif ret == SQL_ERROR:
             raise ProgrammingError('', 'SQL_ERROR')
@@ -226,11 +212,11 @@ def ctrl_err(ht, h, val_ret, ansi):
 def check_success(ODBC_obj, ret):
     if ret not in (SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_NO_DATA):
         if isinstance(ODBC_obj, Cursor):
-            ctrl_err(SQL_HANDLE_STMT, ODBC_obj.stmt_h, ret, ODBC_obj.ansi)
+            ctrl_err(SQL_HANDLE_STMT, ODBC_obj.stmt_h, ret)
         elif isinstance(ODBC_obj, Connection):
-            ctrl_err(SQL_HANDLE_DBC, ODBC_obj.dbc_h, ret, ODBC_obj.ansi)
+            ctrl_err(SQL_HANDLE_DBC, ODBC_obj.dbc_h, ret)
         else:
-            ctrl_err(SQL_HANDLE_ENV, ODBC_obj, ret, False)
+            ctrl_err(SQL_HANDLE_ENV, ODBC_obj, ret)
 
 
 # The Cursor Class.
@@ -239,7 +225,6 @@ class Cursor:
 
         self.stmt_h = ctypes.c_void_p()
         self.connection = conx
-        self.ansi = conx.ansi
         self.row_type_callable = row_type_callable or TupleRow
         self.statement = None
         self._last_param_types = None
@@ -305,10 +290,8 @@ class Cursor:
                     col_num += 1
                     continue
                 elif param_types[col_num][0] in ('i','l','f'):
-                    if py_v3:
-                        c_char_buf = bytes(str(param_val),'ascii')
-                    else:
-                        c_char_buf = str(param_val)
+
+                    c_char_buf = bytes(str(param_val),'ascii')
                     c_buf_len = len(c_char_buf)
 
                 elif param_types[col_num][0] in ('s','S'):
@@ -321,9 +304,7 @@ class Cursor:
                 elif param_types[col_num][0] == 'dt':
                     max_len = self.connection.type_size_dic[SQL_TYPE_TIMESTAMP][0]
                     datetime_str = param_val.strftime('%Y-%m-%d %H:%M:%S.%f')
-                    c_char_buf = datetime_str[:max_len]
-                    if py_v3:
-                        c_char_buf = bytes(c_char_buf,'ascii')
+                    c_char_buf = bytes(c_char_buf,'ascii')
 
                     c_buf_len = len(c_char_buf)
 
@@ -332,9 +313,8 @@ class Cursor:
                         max_len = self.connection.type_size_dic[SQL_TYPE_DATE][0]
                     else:
                         max_len = 10
-                    c_char_buf = param_val.isoformat()[:max_len]
-                    if py_v3:
-                        c_char_buf = bytes(c_char_buf,'ascii')
+
+                    c_char_buf = bytes(c_char_buf,'ascii')
                     c_buf_len = len(c_char_buf)
 
                 elif param_types[col_num][0] == 't':
@@ -351,17 +331,11 @@ class Cursor:
                         time_str = param_val.isoformat()
                         if len(time_str) == 8:
                             time_str += '.000'
-                        c_char_buf = '1900-01-01 '+time_str[0:c_buf_len - 11]
-                    if py_v3:
                         c_char_buf = bytes(c_char_buf,'ascii')
 
                 elif param_types[col_num][0] == 'b':
-                    if param_val == True:
-                        c_char_buf = '1'
-                    else:
-                        c_char_buf = '0'
-                    if py_v3:
-                        c_char_buf = bytes(c_char_buf,'ascii')
+
+                    c_char_buf = bytes(c_char_buf,'ascii')
                     c_buf_len = 1
 
                 elif param_types[col_num][0] == 'D': #Decimal
@@ -376,10 +350,8 @@ class Cursor:
                         # no decimal
                         v = ''.join((digit_string, '0' * (0 - dec_num)))
 
-                    if py_v3:
-                        c_char_buf = bytes(v,'ascii')
-                    else:
-                        c_char_buf = v
+
+                    c_char_buf = bytes(v,'ascii')
                     c_buf_len = len(c_char_buf)
 
                 elif param_types[col_num][0] == 'bi':
@@ -472,14 +444,12 @@ class Cursor:
                         check_success(self, ret)
 
                 if raw_data_parts != []:
-                    if py_v3:
-                        if target_type != SQL_C_BINARY:
-                            data_parts = [x.decode("utf-8") if type(x) is bytes else x for x in raw_data_parts]
-                            raw_value = ''.join(data_parts)
-                        else:
-                            raw_value = BLANK_BYTE.join(raw_data_parts)
+
+                    if target_type != SQL_C_BINARY:
+                        data_parts = [x.decode("utf-8") if type(x) is bytes else x for x in raw_data_parts]
+                        raw_value = ''.join(data_parts)
                     else:
-                        raw_value = ''.join(raw_data_parts)
+                        raw_value = BLANK_BYTE.join(raw_data_parts)
 
                     value_list.append(buf_cvt_func(raw_value))
                 col_num += 1
@@ -505,20 +475,9 @@ class Cursor:
             c_query_string = ctypes.c_char_p(query_string)
             ret = ODBC_API.SQLExecDirect(self.stmt_h, c_query_string, len(query_string))
         check_success(self, ret)
-        self._NumOfRows()
         self._UpdateDesc()
         return self
 
-    def _NumOfRows(self):
-        if not self.connection:
-            self.close()
-
-        NOR = c_ssize_t()
-        ret = SQLRowCount(self.stmt_h, ADDR(NOR))
-        if ret != SQL_SUCCESS:
-            check_success(self, ret)
-        self.rowcount = NOR.value
-        return self.rowcount
 
     def _UpdateDesc(self):
         if not self.connection:
@@ -540,7 +499,6 @@ class Cursor:
         self._ColTypeCodeList = []
         NOC = self._NumOfCols()
         for col in range(1, NOC+1):
-
             ret = ODBC_API.SQLColAttribute(self.stmt_h, col, SQL_DESC_DISPLAY_SIZE, ADDR(create_buffer(10)),
                 10, ADDR(c_short()),ADDR(Cdisp_size))
             if ret != SQL_SUCCESS:
@@ -653,13 +611,11 @@ class Cursor:
 #================================================================
 
 class Connection:
-    def __init__(self, connectString = '', autocommit = False, ansi = False, timeout = 0, unicode_results = use_unicode, readonly = False, **kargs):
+    def __init__(self, connectString = '', timeout = 0, unicode_results = use_unicode, readonly = False, **kargs):
         self.connected = 0
         self.type_size_dic = {}
-        self.ansi = False
         self.unicode_results = False
         self.dbc_h = ctypes.c_void_p()
-        self._autocommit = None
         self.readonly = False
         self.timeout = 0
         # self._cursors = []
@@ -667,7 +623,6 @@ class Connection:
             if value is not None:
                 connectString = connectString + key + '=' + value + ';'
         self.connectString = connectString
-
 
         self.clear_output_converters()
 
@@ -684,25 +639,18 @@ class Connection:
         check_success(self, ret)
 
         self.connection_timeout = connection_timeout
+        self.connect(connectString, timeout, unicode_results, readonly)
 
 
-        self.connect(connectString, autocommit, ansi, timeout, unicode_results, readonly)
-
-
-    def connect(self, connectString = '', autocommit = False, ansi = False, timeout = 0, unicode_results = use_unicode, readonly = False):
+    def connect(self, connectString = '' , timeout = 0, unicode_results = use_unicode, readonly = False):
 
         if timeout != 0:
             ret = ODBC_API.SQLSetConnectAttr(self.dbc_h, SQL_ATTR_LOGIN_TIMEOUT, timeout, SQL_IS_UINTEGER)
             check_success(self, ret)
 
+        c_connectString = wchar_pointer(UCS_buf(self.connectString))
+        odbc_func = ODBC_API.SQLDriverConnectW
 
-        self.ansi = ansi
-        if not ansi:
-            c_connectString = wchar_pointer(UCS_buf(self.connectString))
-            odbc_func = ODBC_API.SQLDriverConnectW
-        else:
-            c_connectString = ctypes.c_char_p(self.connectString)
-            odbc_func = ODBC_API.SQLDriverConnect
 
         if ODBC_API._name != 'odbc32':
             try:
@@ -716,8 +664,6 @@ class Connection:
         print("001",self.connectString, ret)
         print(check_success(self, ret))
         print("002")
-
-        self.autocommit = autocommit
 
         self.readonly = readonly
 
@@ -741,22 +687,11 @@ class Connection:
         return cur
 
 
-    def rollback(self):
-        if not self.connected:
-            raise ProgrammingError('HY000','Attempt to use a closed connection.')
-        ret = SQLEndTran(SQL_HANDLE_DBC, self.dbc_h, SQL_ROLLBACK)
-        if ret != SQL_SUCCESS:
-            check_success(self, ret)
-
-
     def close(self):
         if not self.connected:
             raise ProgrammingError('HY000','Attempt to close a closed connection.')
 
-
         if self.connected:
-            if not self.autocommit:
-                self.rollback()
             ret = ODBC_API.SQLDisconnect(self.dbc_h)
             check_success(self, ret)
         ret = ODBC_API.SQLFreeHandle(SQL_HANDLE_DBC, self.dbc_h)
@@ -781,24 +716,32 @@ def AllocateEnv():
 def check_success(ODBC_obj, ret):
     if ret not in (SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_NO_DATA):
         if isinstance(ODBC_obj, Cursor):
-            ctrl_err(SQL_HANDLE_STMT, ODBC_obj.stmt_h, ret, ODBC_obj.ansi)
+            ctrl_err(SQL_HANDLE_STMT, ODBC_obj.stmt_h, ret)
         elif isinstance(ODBC_obj, Connection):
-            ctrl_err(SQL_HANDLE_DBC, ODBC_obj.dbc_h, ret, ODBC_obj.ansi)
+            ctrl_err(SQL_HANDLE_DBC, ODBC_obj.dbc_h, ret)
         else:
-            ctrl_err(SQL_HANDLE_ENV, ODBC_obj, ret, False)
+            ctrl_err(SQL_HANDLE_ENV, ODBC_obj, ret)
 
 
 
 conn_str = (
     "DRIVER={Devart ODBC Driver for PostgreSQL};"
-    "DATABASE=[DB]};"
+    "DATABASE=anila;"
     "UID=postgres;"
-    "PWD=[parola];"
+    "PWD=123;"
     "SERVER=localhost;"
-    "PORT=[port];"
+    "PORT=5432;"
     )
 
 conn = Connection(conn_str)
-curs = conn.cursor().execute('SELECT * FROM "admin";')
+curs = conn.cursor().execute("INSERT INTO common_settings VALUES ('test','[]');")
+conn.close()
+input("Press Enter to continue...")
+conn = Connection(conn_str)
+curs = conn.cursor().execute('SELECT * FROM "common_settings";')
 print(curs.fetchone())
+conn.close()
+input("Press Enter to continue...")
+conn = Connection(conn_str)
+curs = conn.cursor().execute("DELETE FROM common_settings WHERE id= 'test';")
 conn.close()
